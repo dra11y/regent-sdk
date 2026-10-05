@@ -8,7 +8,7 @@ use crate::hosts::handlers::localhost::WhichUser;
 use crate::{command::CommandResult, hosts::privilege::Privilege};
 
 use serde::{Deserialize, Serialize};
-pub trait HostHandler: Sized {
+pub trait HostHandler: Sized + Send + Clone + 'static {
     fn connect(&mut self, endpoint: &str) -> Result<(), Error>;
 
     fn is_connected(&mut self) -> bool;

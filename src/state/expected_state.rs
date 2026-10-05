@@ -1,7 +1,7 @@
 use crate::state::attribute::Attribute;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExpectedState {
     pub attributes: Vec<Attribute>,
 }

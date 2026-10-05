@@ -13,6 +13,7 @@ use std::io::Read;
 use std::net::TcpStream;
 use std::path::Path;
 use std::path::PathBuf;
+use tracing::info;
 
 #[derive(Clone)]
 pub struct Ssh2HostHandler {
@@ -191,6 +192,7 @@ impl HostHandler for Ssh2HostHandler {
         command: &str,
         privilege: &Privilege,
     ) -> Result<CommandResult, Error> {
+        info!(command, ?privilege, "Running command");
         match self.session.channel_session() {
             Ok(mut channel) => {
                 let final_command = final_command(command, privilege, &WhichUser::CurrentUser);
@@ -356,7 +358,6 @@ mod tests {
 
     #[test]
     fn test_deserialize_key_memory() {
-
         // THIS KEY IS NOT USED ANYWHERE. IT HAS BEEN GENERATED TO PROVIDE REALISTIC CONTENT FOR THIS TEST ONLY.
         let yaml = r#"
             !KeyMemory

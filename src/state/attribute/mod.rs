@@ -4,6 +4,8 @@ pub mod system;
 pub mod utilities;
 
 use serde::{Deserialize, Serialize};
+use tracing::debug;
+use tracing::info;
 
 use crate::error::Error;
 use crate::hosts::managed_host::InternalApiCallOutcome;
@@ -32,7 +34,7 @@ use crate::{
     state::attribute::package::pacman::{PacmanApiCall, PacmanBlockExpectedState},
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Attribute {
     pub privilege: Privilege,
     detail: AttributeDetail,
@@ -97,7 +99,7 @@ impl Attribute {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AttributeDetail {
     Apt(AptBlockExpectedState),
     YumDnf(YumDnfBlockExpectedState),
@@ -116,6 +118,7 @@ impl AttributeDetail {
         host_properties: &Option<HostProperties>,
         privilege: &Privilege,
     ) -> Result<AttributeComplianceAssessment, Error> {
+        debug!(?self, "Assessing compliance");
         match self {
             AttributeDetail::Apt(expected_state_criteria) => {
                 expected_state_criteria.assess_compliance(host_handler, host_properties, privilege)
@@ -150,6 +153,7 @@ impl AttributeDetail {
         host_properties: &Option<HostProperties>,
         privilege: &Privilege,
     ) -> Result<AttributeComplianceResult, Error> {
+        info!(?self, "Reaching compliance");
         match self.assess(host_handler, host_properties, privilege) {
             Ok(attribute_compliance) => match attribute_compliance {
                 AttributeComplianceAssessment::Compliant => Ok(AttributeComplianceResult::from(
@@ -174,6 +178,7 @@ impl AttributeDetail {
                                 )));
                             }
                             Remediation::Pacman(attribute_api_call) => {
+                                info!(?attribute_api_call, "Performing API call");
                                 match attribute_api_call.call(host_handler, host_properties) {
                                     Ok(internal_api_call_outcome) => {
                                         (remediation, internal_api_call_outcome)
@@ -184,6 +189,7 @@ impl AttributeDetail {
                                 }
                             }
                             Remediation::Apt(attribute_api_call) => {
+                                info!(?attribute_api_call, "Performing API call");
                                 match attribute_api_call.call(host_handler, host_properties) {
                                     Ok(internal_api_call_outcome) => {
                                         (remediation, internal_api_call_outcome)
@@ -194,6 +200,7 @@ impl AttributeDetail {
                                 }
                             }
                             Remediation::YumDnf(attribute_api_call) => {
+                                info!(?attribute_api_call, "Performing API call");
                                 match attribute_api_call.call(host_handler, host_properties) {
                                     Ok(internal_api_call_outcome) => {
                                         (remediation, internal_api_call_outcome)
@@ -204,6 +211,7 @@ impl AttributeDetail {
                                 }
                             }
                             Remediation::LineInFile(attribute_api_call) => {
+                                info!(?attribute_api_call, "Performing API call");
                                 match attribute_api_call.call(host_handler, host_properties) {
                                     Ok(internal_api_call_outcome) => {
                                         (remediation, internal_api_call_outcome)
@@ -214,6 +222,7 @@ impl AttributeDetail {
                                 }
                             }
                             Remediation::Debug(attribute_api_call) => {
+                                info!(?attribute_api_call, "Performing API call");
                                 match attribute_api_call.call(host_handler, host_properties) {
                                     Ok(internal_api_call_outcome) => {
                                         (remediation, internal_api_call_outcome)
@@ -224,6 +233,7 @@ impl AttributeDetail {
                                 }
                             }
                             Remediation::Ping(attribute_api_call) => {
+                                info!(?attribute_api_call, "Performing API call");
                                 match attribute_api_call.call(host_handler, host_properties) {
                                     Ok(internal_api_call_outcome) => {
                                         (remediation, internal_api_call_outcome)
@@ -234,6 +244,7 @@ impl AttributeDetail {
                                 }
                             }
                             Remediation::Service(attribute_api_call) => {
+                                info!(?attribute_api_call, "Performing API call");
                                 match attribute_api_call.call(host_handler, host_properties) {
                                     Ok(internal_api_call_outcome) => {
                                         (remediation, internal_api_call_outcome)
@@ -244,6 +255,7 @@ impl AttributeDetail {
                                 }
                             }
                             Remediation::Command(attribute_api_call) => {
+                                info!(?attribute_api_call, "Performing API call");
                                 match attribute_api_call.call(host_handler, host_properties) {
                                     Ok(internal_api_call_outcome) => {
                                         (remediation, internal_api_call_outcome)
@@ -296,11 +308,12 @@ impl Remediation {
         host_handler: &mut Handler,
         host_properties: &Option<HostProperties>,
     ) -> Result<InternalApiCallOutcome, Error> {
+        info!(?self, "Reaching compliance for");
         match self {
-            Remediation::None(_) => {
+            Remediation::None(err) => {
                 // This case should not occur here according to current logic
-                Err(Error::InternalLogicError(String::from(
-                    "Unexpected remediation",
+                Err(Error::InternalLogicError(format!(
+                    "Unexpected remediation: {err}",
                 )))
             }
             Remediation::Pacman(api_call) => api_call.call(host_handler, host_properties),

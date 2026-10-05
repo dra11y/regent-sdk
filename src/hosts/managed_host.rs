@@ -1,5 +1,9 @@
+use chrono::Duration;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
 use crate::LocalHostHandler;
 use crate::Ssh2AuthMethod;
@@ -12,7 +16,7 @@ use crate::state::ExpectedState;
 use crate::state::attribute::Remediation;
 use crate::state::compliance::Action;
 use crate::state::compliance::AttributeComplianceAssessment;
-use crate::state::compliance::HostStatus;
+use crate::state::compliance::HostState;
 use crate::state::compliance::ManagedHostStatus;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -26,7 +30,7 @@ where
     host_properties: Option<HostProperties>,
 }
 
-impl<Handler: HostHandler + Send + Clone + 'static> ManagedHost<Handler> {
+impl<Handler: HostHandler> ManagedHost<Handler> {
     pub fn new(endpoint: &str, handler: Handler) -> ManagedHost<Handler> {
         ManagedHost {
             endpoint: endpoint.to_string(),
@@ -187,7 +191,7 @@ impl<Handler: HostHandler + Send + Clone + 'static> ManagedHost<Handler> {
             return Err(Error::NotConnectedToHost);
         }
 
-        let mut final_host_status = HostStatus::AlreadyCompliant;
+        let mut final_host_status = HostState::AlreadyCompliant;
         let mut reaching_compliance_failed = false;
         let mut actions_taken: Vec<Action> = Vec::new();
 
@@ -201,11 +205,16 @@ impl<Handler: HostHandler + Send + Clone + 'static> ManagedHost<Handler> {
                         AttributeComplianceAssessment::NonCompliant(remediations) => {
                             // Host is not compliant as there are remediations to perform
                             // Host status switches from AlreadyCompliant to ReachComplianceSuccess by default
-                            final_host_status = HostStatus::ReachComplianceSuccess;
+                            final_host_status = HostState::ReachComplianceSuccess;
 
                             // Try to remedy
 
                             for remediation in remediations {
+                                if let Remediation::None(reason) = &remediation {
+                                    info!(reason, "Skipping remediation");
+                                    continue;
+                                }
+
                                 match remediation
                                     .reach_compliance(&mut self.handler, &self.host_properties)
                                 {
@@ -219,7 +228,7 @@ impl<Handler: HostHandler + Send + Clone + 'static> ManagedHost<Handler> {
                                             internal_api_call_outcome
                                         {
                                             reaching_compliance_failed = true;
-                                            final_host_status = HostStatus::ReachComplianceFailed;
+                                            final_host_status = HostState::ReachComplianceFailed;
 
                                             // Stop processing more mediations for this attribute
                                             break;
@@ -245,7 +254,7 @@ impl<Handler: HostHandler + Send + Clone + 'static> ManagedHost<Handler> {
             }
         }
 
-        if let HostStatus::ReachComplianceFailed = final_host_status {
+        if let HostState::ReachComplianceFailed = final_host_status {
             Ok(ManagedHostStatus::reach_compliance_failed(actions_taken))
         } else {
             Ok(ManagedHostStatus::reach_compliance_success(actions_taken))
@@ -286,8 +295,6 @@ pub enum InternalApiCallOutcome {
     AllowedFailure(String),
 }
 
-
-
 // #[derive(Clone, Serialize, Deserialize, Debug)]
 // pub struct ManagedHostIntermediateRepresentation
 // {
@@ -302,7 +309,7 @@ pub enum InternalApiCallOutcome {
 //     ) -> ManagedHost<Handler> {
 
 //         let endpoint: String = self.endpoint;
-        
+
 //         let mut vars: HashMap<String, String> = HashMap::new();
 //         if let Some(vars_list) = self.vars {
 //             vars.extend(vars_list);
@@ -311,7 +318,7 @@ pub enum InternalApiCallOutcome {
 //         match self.connection.kind {
 //             HandlerKind::Localhost(local_host_handler) => {
 //                 ManagedHost::from(endpoint, handler, vars) { endpoint, handler: local_host_handler, vars }
-                
+
 //             }
 //             HandlerKind::Ssh2(ssh2_auth_method) => {
 //                 Ssh2HostHandler::from(ssh2_auth_method)

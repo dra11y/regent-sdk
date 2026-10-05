@@ -4,21 +4,21 @@ use crate::{hosts::managed_host::InternalApiCallOutcome, state::attribute::Remed
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ManagedHostStatus {
-    state: HostStatus,
-    actions_taken: Option<Vec<Action>>,
+    pub state: HostState,
+    pub actions_taken: Option<Vec<Action>>,
 }
 
 impl ManagedHostStatus {
     pub fn already_compliant() -> Self {
         Self {
-            state: HostStatus::AlreadyCompliant,
+            state: HostState::AlreadyCompliant,
             actions_taken: None,
         }
     }
 
     pub fn not_compliant(remediations: Vec<Remediation>) -> Self {
         Self {
-            state: HostStatus::NotCompliant,
+            state: HostState::NotCompliant,
             actions_taken: Some(
                 remediations
                     .into_iter()
@@ -30,78 +30,66 @@ impl ManagedHostStatus {
 
     pub fn reach_compliance_success(actions: Vec<Action>) -> Self {
         Self {
-            state: HostStatus::ReachComplianceSuccess,
+            state: HostState::ReachComplianceSuccess,
             actions_taken: Some(actions),
         }
     }
 
     pub fn reach_compliance_failed(actions: Vec<Action>) -> Self {
         Self {
-            state: HostStatus::ReachComplianceFailed,
+            state: HostState::ReachComplianceFailed,
             actions_taken: Some(actions),
         }
     }
 
     pub fn is_already_compliant(&self) -> bool {
-        matches!(self.state, HostStatus::AlreadyCompliant)
+        matches!(self.state, HostState::AlreadyCompliant)
     }
 
     pub fn is_not_compliant(&self) -> bool {
-        matches!(self.state, HostStatus::NotCompliant)
+        matches!(self.state, HostState::NotCompliant)
     }
 
     pub fn is_reach_compliance_success(&self) -> bool {
-        matches!(self.state, HostStatus::ReachComplianceSuccess)
+        matches!(self.state, HostState::ReachComplianceSuccess)
     }
 
     pub fn is_reach_compliance_failed(&self) -> bool {
-        matches!(self.state, HostStatus::ReachComplianceFailed)
+        matches!(self.state, HostState::ReachComplianceFailed)
     }
 
-    pub fn all_remediations(&self) -> Vec<Remediation> {
-        // TODO : improve this by returning Option or Result
-        if let None = self.actions_taken {
-            return Vec::new();
-        }
-
-        self.actions_taken
-            .as_ref()
-            .unwrap()
-            .iter()
-            .filter_map(|action| match &action.remediation {
-                Remediation::None(_) => None,
-                _ => Some(action.remediation.clone()),
-            })
-            .collect()
+    pub fn all_remediations(&self) -> Option<Vec<Remediation>> {
+        let actions = self.actions_taken.as_ref()?;
+        Some(
+            actions
+                .iter()
+                .filter_map(|action| match &action.remediation {
+                    Remediation::None(_) => None,
+                    remediation => Some(remediation),
+                })
+                .cloned()
+                .collect(),
+        )
     }
 
-    pub fn actions_taken(&self) -> Vec<(Remediation, InternalApiCallOutcome)> {
-        // TODO : improve this by returning Option or Result
-        match &self.actions_taken {
-            None => {
-                return Vec::new();
-            }
-            Some(actions) => {
-                let mut actions_taken: Vec<(Remediation, InternalApiCallOutcome)> = Vec::new();
-
-                for action in actions {
-                    match &action.action_result {
-                        Some(action_result) => {
-                            actions_taken.push((action.remediation.clone(), action_result.clone()));
-                        }
-                        None => {
-                            break;
-                        }
-                    }
-                }
-                actions_taken
-            }
-        }
+    pub fn actions_taken(&self) -> Option<Vec<(Remediation, InternalApiCallOutcome)>> {
+        let actions = self.actions_taken.as_ref()?;
+        Some(
+            actions
+                .iter()
+                .filter_map(|action| {
+                    action
+                        .action_result
+                        .as_ref()
+                        .map(|action_result| (action.remediation.clone(), action_result.clone()))
+                })
+                .collect(),
+        )
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub enum HostStatus {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HostState {
     AlreadyCompliant,
     NotCompliant,
     ReachComplianceFailed,

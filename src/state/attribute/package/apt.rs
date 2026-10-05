@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::{Error, Result};
 use crate::hosts::managed_host::InternalApiCallOutcome;
 use crate::hosts::managed_host::{AssessCompliance, ReachCompliance};
 use crate::hosts::properties::HostProperties;
@@ -13,6 +13,8 @@ pub enum AptModuleInternalApiCall {
     Install(String),
     Remove(String),
     Upgrade,
+    DistUpgrade,
+    Autoremove,
 }
 
 impl std::fmt::Display for AptModuleInternalApiCall {
@@ -21,6 +23,8 @@ impl std::fmt::Display for AptModuleInternalApiCall {
             AptModuleInternalApiCall::Install(package) => write!(f, "install {}", package),
             AptModuleInternalApiCall::Remove(package) => write!(f, "remove {}", package),
             AptModuleInternalApiCall::Upgrade => write!(f, "upgrade"),
+            AptModuleInternalApiCall::DistUpgrade => write!(f, "dist-upgrade"),
+            AptModuleInternalApiCall::Autoremove => write!(f, "autoremove"),
         }
     }
 }
@@ -38,12 +42,14 @@ pub struct AptBlockExpectedState {
     state: Option<PackageExpectedState>,
     package: Option<String>,
     upgrade: Option<bool>,
+    dist_upgrade: Option<bool>,
+    autoremove: Option<bool>,
 }
 
 // Chained methods to allow building an AptBlockExpectedState as follows :
 // let apt_block = AptBlockExpectedState::builder()
 //     .with_package_state("apache2", PackageExpectedState::Present)
-//     .with_system_upgrade()
+//     .with_dist_upgrade()
 //     .build();
 impl AptBlockExpectedState {
     pub fn builder() -> AptBlockExpectedState {
@@ -51,11 +57,23 @@ impl AptBlockExpectedState {
             state: None,
             package: None,
             upgrade: None,
+            dist_upgrade: None,
+            autoremove: None,
         }
     }
 
-    pub fn with_system_upgrade(&mut self) -> &mut Self {
+    pub fn with_dist_upgrade(&mut self) -> &mut Self {
+        self.dist_upgrade = Some(true);
+        self
+    }
+
+    pub fn with_upgrade(&mut self) -> &mut Self {
         self.upgrade = Some(true);
+        self
+    }
+
+    pub fn with_autoremove(&mut self) -> &mut Self {
+        self.autoremove = Some(true);
         self
     }
 
@@ -69,7 +87,7 @@ impl AptBlockExpectedState {
         self
     }
 
-    pub fn build(&self) -> Result<AptBlockExpectedState, Error> {
+    pub fn build(&self) -> Result<AptBlockExpectedState> {
         // if let Err(error_detail) = self.check() {
         //     return Err(error_detail);
         // }
@@ -78,7 +96,7 @@ impl AptBlockExpectedState {
 }
 
 // impl Check for AptBlockExpectedState {
-//     fn check(&self) -> Result<(), Error> {
+//     fn check(&self) -> Result<()> {
 //         if let (None, None, None) = (&self.state, &self.package, self.upgrade) {
 //             return Err(Error::IncoherentExpectedState(format!(
 //                 "All parameters are unset. Please describe the expected state."
@@ -106,7 +124,7 @@ impl<Handler: HostHandler> AssessCompliance<Handler> for AptBlockExpectedState {
         host_handler: &mut Handler,
         host_properties: &Option<HostProperties>,
         privilege: &Privilege,
-    ) -> Result<AttributeComplianceAssessment, Error> {
+    ) -> Result<AttributeComplianceAssessment> {
         if !host_handler
             .is_this_command_available("apt-get", &Privilege::None)
             .unwrap()
@@ -127,7 +145,7 @@ impl<Handler: HostHandler> AssessCompliance<Handler> for AptBlockExpectedState {
                 match state {
                     PackageExpectedState::Present => {
                         // Check is package is already installed or needs to be
-                        if is_package_installed(host_handler, self.package.clone().unwrap()) {
+                        if is_package_installed(host_handler, self.package.clone().unwrap())? {
                             remediations.push(Remediation::None(format!(
                                 "{} already present",
                                 self.package.clone().unwrap()
@@ -142,7 +160,7 @@ impl<Handler: HostHandler> AssessCompliance<Handler> for AptBlockExpectedState {
                     }
                     PackageExpectedState::Absent => {
                         // Check is package is already absent or needs to be removed
-                        if is_package_installed(host_handler, self.package.clone().unwrap()) {
+                        if is_package_installed(host_handler, self.package.clone().unwrap())? {
                             // Package is present and needs to be removed
                             remediations.push(Remediation::Apt(AptApiCall::from(
                                 AptModuleInternalApiCall::Remove(self.package.clone().unwrap()),
@@ -163,9 +181,30 @@ impl<Handler: HostHandler> AssessCompliance<Handler> for AptBlockExpectedState {
         // -> if no update available, state = Matched
         // -> if updates available, state = ApiCall -> action = "apt upgrade"
         if let Some(value) = self.upgrade {
-            if value {
+            if value && needs_upgrade(host_handler, false)? {
                 remediations.push(Remediation::Apt(AptApiCall::from(
                     AptModuleInternalApiCall::Upgrade,
+                    privilege.clone(),
+                )));
+            }
+        }
+
+        // TODO: have this do an "apt update"
+        // -> if no update available, state = Matched
+        // -> if updates available, state = ApiCall -> action = "apt dist-upgrade"
+        if let Some(value) = self.dist_upgrade {
+            if value && needs_upgrade(host_handler, true)? {
+                remediations.push(Remediation::Apt(AptApiCall::from(
+                    AptModuleInternalApiCall::DistUpgrade,
+                    privilege.clone(),
+                )));
+            }
+        }
+
+        if let Some(value) = self.autoremove {
+            if value && needs_autoremove(host_handler)? {
+                remediations.push(Remediation::Apt(AptApiCall::from(
+                    AptModuleInternalApiCall::Autoremove,
                     privilege.clone(),
                 )));
             }
@@ -202,6 +241,12 @@ impl AptApiCall {
             AptModuleInternalApiCall::Upgrade => {
                 return String::from("Upgrade");
             }
+            AptModuleInternalApiCall::DistUpgrade => {
+                return String::from("DistUpgrade");
+            }
+            AptModuleInternalApiCall::Autoremove => {
+                return String::from("Autoremove");
+            }
         }
     }
 }
@@ -211,7 +256,7 @@ impl<Handler: HostHandler> ReachCompliance<Handler> for AptApiCall {
         &self,
         host_handler: &mut Handler,
         host_properties: &Option<HostProperties>,
-    ) -> Result<InternalApiCallOutcome, Error> {
+    ) -> Result<InternalApiCallOutcome> {
         let (cmd, privilege) = match &self.api_call {
             AptModuleInternalApiCall::Install(package_name) => (
                 format!(
@@ -229,6 +274,15 @@ impl<Handler: HostHandler> ReachCompliance<Handler> for AptApiCall {
             ),
             AptModuleInternalApiCall::Upgrade => (
                 "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y".to_string(),
+                &self.privilege,
+            ),
+            AptModuleInternalApiCall::DistUpgrade => (
+                "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y"
+                    .to_string(),
+                &self.privilege,
+            ),
+            AptModuleInternalApiCall::Autoremove => (
+                "apt-get update && DEBIAN_FRONTEND=noninteractive apt autoremove -y".to_string(),
                 &self.privilege,
             ),
         };
@@ -255,12 +309,37 @@ impl AptApiCall {
     }
 }
 
-fn is_package_installed<Handler: HostHandler>(host_handler: &mut Handler, package: String) -> bool {
+fn needs_autoremove<Handler: HostHandler>(host_handler: &mut Handler) -> Result<bool> {
+    let test = host_handler.run_command(
+        "apt-get -s upgrade | grep -q 'autoremove'",
+        &Privilege::None,
+    )?;
+
+    Ok(test.return_code == 0)
+}
+
+fn needs_upgrade<Handler: HostHandler>(host_handler: &mut Handler, dist: bool) -> Result<bool> {
+    let test = host_handler.run_command(
+        format!(
+            "apt-get -s {}upgrade | grep -q 'will be upgraded'",
+            if dist { "dist-" } else { "" }
+        )
+        .as_str(),
+        &Privilege::None,
+    )?;
+
+    Ok(test.return_code == 0)
+}
+
+fn is_package_installed<Handler: HostHandler>(
+    host_handler: &mut Handler,
+    package: String,
+) -> Result<bool> {
     let test = host_handler
         .run_command(format!("dpkg -s {}", package).as_str(), &Privilege::None)
         .unwrap();
 
-    if test.return_code == 0 { true } else { false }
+    Ok(test.return_code == 0)
 }
 
 #[cfg(test)]
@@ -298,7 +377,7 @@ mod tests {
     #[test]
     fn rejecting_incorrect_apt_module_block_from_yaml_str() {
         let raw_attribute = "---
-- 
+-
     ";
         assert!(yaml_serde::from_str::<AptBlockExpectedState>(raw_attribute).is_err());
 

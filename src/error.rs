@@ -1,4 +1,7 @@
-#[derive(Debug)]
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, wherror::Error)]
+#[error(debug)]
 pub enum Error {
     FailureToFindGroupContent,
     FailureToParseContent(String),

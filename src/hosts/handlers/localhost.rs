@@ -7,6 +7,7 @@ use crate::hosts::privilege::Privilege;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalHostHandler {
@@ -62,6 +63,7 @@ impl HostHandler for LocalHostHandler {
         command: &str,
         privilege: &Privilege,
     ) -> Result<CommandResult, Error> {
+        info!(command, ?privilege, "Running command");
         let final_command = final_command(command, privilege, &self.user);
 
         let result = match &self.user {
